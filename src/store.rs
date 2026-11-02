@@ -43,7 +43,14 @@ impl ObjectStore {
 
         // Stream chunk-by-chunk from the source to BOTH the temp file and hasher
         loop {
-            let bytes_read = source.read(&mut buffer)?;
+            let bytes_read = match source.read(&mut buffer) {
+                Ok(0) => break, // EOF
+                Ok(n) => n,
+                // Retry immediately if the read was interrupted by an OS signal
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.into()),
+            };
+
             if bytes_read == 0 {
                 break;
             }
@@ -94,6 +101,28 @@ mod tests {
         let mut hasher = Hasher::new();
         hasher.update(data);
         hasher.finalize()
+    }
+
+    /// A mock reader that simulates an OS interrupt once before yielding data.
+    struct InterruptingReader {
+        has_interrupted: bool,
+        inner_data: &'static [u8],
+    }
+
+    impl Read for InterruptingReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if !self.has_interrupted {
+                self.has_interrupted = true;
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "simulated OS interrupt",
+                ));
+            }
+            let mut inner_slice = self.inner_data;
+            let bytes_read = inner_slice.read(buf)?;
+            self.inner_data = inner_slice;
+            Ok(bytes_read)
+        }
     }
 
     #[test]
@@ -253,10 +282,10 @@ mod tests {
         let store = ObjectStore::new(dir.path()).unwrap();
         let data = b"Hello world";
 
-        // First pass: ingest normally
+        // write normally
         let object = store.put(&data[..])?;
 
-        // Second pass: ingest again. It will write to a temp file,
+        // Try to write again. It will write to a temp file,
         // realize the hash already exists, and discard the temp file.
         store.put(&data[..])?;
 
@@ -281,6 +310,28 @@ mod tests {
         let object = store.put(&data[..])?;
 
         assert_eq!(object.size(), 11);
+
+        Ok(())
+    }
+
+    #[test]
+    fn put_recovers_from_interrupted_read() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = ObjectStore::new(dir.path()).unwrap();
+
+        let data = b"Resilient streaming";
+        let reader = InterruptingReader {
+            has_interrupted: false,
+            inner_data: data,
+        };
+
+        let object = store.put(reader).expect(
+            "store.put failed: it should have ignored the Interrupted error and completed the read",
+        );
+
+        assert_eq!(object.size(), data.len());
+        let obj_path = store.object_path(object.id());
+        assert_eq!(std::fs::read(obj_path)?, data);
 
         Ok(())
     }

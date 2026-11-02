@@ -5,11 +5,8 @@ pub struct Hasher {
 }
 
 impl Hasher {
-    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        Self {
-            inner: blake3::Hasher::new(),
-        }
+        Self::default()
     }
 
     pub fn update(&mut self, data: &[u8]) {
@@ -18,6 +15,14 @@ impl Hasher {
 
     pub fn finalize(&self) -> ObjectId {
         ObjectId::new(*self.inner.finalize().as_bytes())
+    }
+}
+
+impl Default for Hasher {
+    fn default() -> Self {
+        Self {
+            inner: blake3::Hasher::new(),
+        }
     }
 }
 
