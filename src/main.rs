@@ -39,14 +39,18 @@ fn handle_put(file: Option<impl AsRef<Path>>) -> anyhow::Result<()> {
             let file =
                 File::open(path).with_context(|| format!("failed to open '{}'", path.display()))?;
 
-            store.put(file)?
+            store
+                .put(file)
+                .with_context(|| format!("failed to store '{}'", path.display()))?
         }
         None => {
             if io::stdin().is_terminal() {
                 anyhow::bail!("no input file specified and stdin is a terminal");
             }
 
-            store.put(io::stdin().lock())?
+            store
+                .put(io::stdin().lock())
+                .context("failed to store object from stdin")?
         }
     };
 
@@ -55,7 +59,7 @@ fn handle_put(file: Option<impl AsRef<Path>>) -> anyhow::Result<()> {
         object.kind(),
         object.size(),
         file_path
-            .map(|path: &Path| path.display().to_string())
+            .map(|path| path.display().to_string())
             .unwrap_or_else(|| "stdin".to_string())
     );
 
