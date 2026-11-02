@@ -66,3 +66,38 @@ fn test_put_creates_object_file_in_store() -> Result<(), Box<dyn std::error::Err
 
     Ok(())
 }
+
+#[test]
+fn test_put_reads_from_stdin() -> Result<(), Box<dyn std::error::Error>> {
+    let workspace = tempdir()?;
+
+    let input = b"test put reads from stdin";
+    let expected_hash = blake3::hash(input).to_hex().to_string();
+
+    let mut cmd = Command::cargo_bin(BIN_NAME)?;
+
+    cmd.current_dir(workspace.path())
+        .arg("put")
+        .write_stdin(input.as_slice());
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::starts_with(expected_hash.as_str()));
+
+    let (dir, file_name) = expected_hash.split_at(2);
+
+    let stored_file_path = workspace
+        .path()
+        .join(".cas")
+        .join("objects")
+        .join(dir)
+        .join(file_name);
+
+    assert!(
+        stored_file_path.exists(),
+        "Expected object file not found at {:?}",
+        stored_file_path
+    );
+
+    Ok(())
+}

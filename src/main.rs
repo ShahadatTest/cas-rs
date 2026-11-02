@@ -5,7 +5,11 @@ mod hash;
 mod object;
 mod store;
 
-use std::{fs::File, path::Path};
+use std::{
+    fs::File,
+    io::{self, IsTerminal},
+    path::Path,
+};
 
 use anyhow::Context;
 use clap::Parser;
@@ -25,21 +29,38 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_put(file: impl AsRef<Path>) -> anyhow::Result<()> {
-    let file_path = file.as_ref();
-    let file_stream = File::open(file_path)
-        .with_context(|| format!("failed to open '{}'", file_path.display()))?;
+fn handle_put(file: Option<impl AsRef<Path>>) -> anyhow::Result<()> {
+    let file_path = file.as_ref().map(AsRef::as_ref);
 
-    let store = ObjectStore::new(Path::new("."))?;
-    let object = store
-        .put(file_stream)
-        .with_context(|| format!("failed to store '{}'", file_path.display()))?;
+    let store = ObjectStore::new(".")?;
+
+    let object = match file_path {
+        Some(path) => {
+            let file =
+                File::open(path).with_context(|| format!("failed to open '{}'", path.display()))?;
+
+            store
+                .put(file)
+                .with_context(|| format!("failed to store '{}'", path.display()))?
+        }
+        None => {
+            if io::stdin().is_terminal() {
+                anyhow::bail!("no input file specified and stdin is a terminal");
+            }
+
+            store
+                .put(io::stdin().lock())
+                .context("failed to store object from stdin")?
+        }
+    };
 
     eprintln!(
         "Stored {:?} object ({} bytes) from '{}'",
         object.kind(),
         object.size(),
-        file_path.display()
+        file_path
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "stdin".to_string())
     );
 
     println!("{}", object.id());
