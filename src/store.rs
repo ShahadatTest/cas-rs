@@ -33,8 +33,11 @@ impl ObjectStore {
     }
 
     pub fn put(&self, mut source: impl Read) -> Result<Object> {
-        let temp_dir = self.root.join("tmp");
+        // Keep staging files under `.cas/`, not the store root / CWD (#22).
+        let temp_dir = self.root.join(".cas").join("tmp");
         fs::create_dir_all(&temp_dir)?;
+        // Remove the staging dir when empty after this put (success or error).
+        let _cleanup = RemoveEmptyDir(temp_dir.clone());
 
         let mut temp = NamedTempFile::new_in(&temp_dir)?;
         let mut hasher = Hasher::new();
@@ -89,6 +92,15 @@ impl ObjectStore {
             .join(".cas/objects")
             .join(&hash[..2])
             .join(&hash[2..])
+    }
+}
+
+/// Best-effort cleanup for an empty staging directory left by `put`.
+struct RemoveEmptyDir(PathBuf);
+
+impl Drop for RemoveEmptyDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir(&self.0);
     }
 }
 
@@ -244,9 +256,10 @@ mod tests {
         // Ensure the objects directory only has the final blob
         assert_eq!(fs::read_dir(path.parent().unwrap())?.count(), 1);
 
-        // Ensure our new dedicated `tmp/` folder is empty after streams finish
-        let tmp_dir = dir.path().join("tmp");
-        assert_eq!(fs::read_dir(tmp_dir)?.count(), 0);
+        // Staging lives under `.cas/tmp` and should be gone after put (#22).
+        let tmp_dir = dir.path().join(".cas").join("tmp");
+        assert!(!tmp_dir.exists());
+        assert!(!dir.path().join("tmp").exists());
 
         Ok(())
     }
@@ -293,9 +306,24 @@ mod tests {
         let obj_path = store.object_path(object.id());
         assert_eq!(fs::read_dir(obj_path.parent().unwrap())?.count(), 1);
 
-        // Verify the tmp directory is completely empty
-        let tmp_dir = dir.path().join("tmp");
-        assert_eq!(fs::read_dir(tmp_dir)?.count(), 0);
+        // Verify the staging directory under `.cas/` was removed (#22).
+        let tmp_dir = dir.path().join(".cas").join("tmp");
+        assert!(!tmp_dir.exists());
+        assert!(!dir.path().join("tmp").exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn put_stages_under_cas_not_cwd_tmp() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = ObjectStore::new(dir.path()).unwrap();
+
+        store.put(&b"staged under .cas"[..])?;
+
+        assert!(dir.path().join(".cas").join("objects").is_dir());
+        assert!(!dir.path().join("tmp").exists());
+        assert!(!dir.path().join(".cas").join("tmp").exists());
 
         Ok(())
     }
