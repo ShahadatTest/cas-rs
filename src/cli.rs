@@ -12,5 +12,5 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// Save a file to the local store and output its unique hash.
-    Put { file: PathBuf },
+    Put { file: Option<PathBuf> },
 }
